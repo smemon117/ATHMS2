@@ -1,0 +1,1500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aircraft Tire Health Monitoring System (ATHMS)</title>
+    
+    <!-- React & ReactDOM Production UMD -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: { 50: '#f0fdfa', 400: '#2dd4bf', 500: '#14b8a6', 600: '#0d9488', 700: '#0f766e' }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; color: #0f172a; margin: 0; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        const INITIAL_LIMITS = {
+            Airbus: {
+                warningDropPsi: 10,
+                criticalDropPsi: 18,
+                warningCrackGrowthMm: 0.5,
+                criticalCrackGrowthMm: 1.0,
+                criticalCrackLengthMm: 4.0,
+                referenceSource: 'Airbus A320 AMM Chapter 32-41-00 (Rev 42)'
+            },
+            Boeing: {
+                warningDropPsi: 12,
+                criticalDropPsi: 20,
+                warningCrackGrowthMm: 0.6,
+                criticalCrackGrowthMm: 1.2,
+                criticalCrackLengthMm: 5.0,
+                referenceSource: 'Boeing 737-800 AMM Task 32-45-00'
+            }
+        };
+
+        const INITIAL_FLEET = [
+            { id: 'AC-1', reg: '9M-AQA', model: 'A320', mfg: 'Airbus', variant: '200', sn: 'MSN-4210', status: 'Active', notes: 'Scheduled for C-Check Q4' },
+            { id: 'AC-2', reg: '9M-MXB', model: '737-800', mfg: 'Boeing', variant: '800', sn: '38124', status: 'Active', notes: 'Short-haul sector operations' }
+        ];
+
+        const TIRE_CONFIGS = {
+            'A320': ['NLG-L', 'NLG-R', 'MLG-LI', 'MLG-LO', 'MLG-RI', 'MLG-RO'],
+            '737-800': ['NLG-L', 'NLG-R', 'MLG-L1', 'MLG-L2', 'MLG-R1', 'MLG-R2']
+        };
+
+        const MANUFACTURER_OPTIONS = ['Michelin', 'Bridgestone', 'Goodyear', 'Pirelli', 'Dunlop', 'Other'];
+
+        const INITIAL_TIRES = [
+            { id: 'T-101', reg: '9M-AQA', position: 'NLG-L', mfg: 'Michelin', model: 'Radial Air', sn: 'MCH-8821', status: 'Normal', hours: 420, cycles: 280 },
+            { id: 'T-102', reg: '9M-AQA', position: 'NLG-R', mfg: 'Michelin', model: 'Radial Air', sn: 'MCH-8822', status: 'Normal', hours: 420, cycles: 280 },
+            { id: 'T-103', reg: '9M-AQA', position: 'MLG-LI', mfg: 'Bridgestone', model: 'Flightstar', sn: 'BST-3101', status: 'Warning', hours: 610, cycles: 410 },
+            { id: 'T-104', reg: '9M-AQA', position: 'MLG-LO', mfg: 'Bridgestone', model: 'Flightstar', sn: 'BST-3102', status: 'Normal', hours: 610, cycles: 410 },
+            { id: 'T-105', reg: '9M-AQA', position: 'MLG-RI', mfg: 'Michelin', model: 'Radial Air', sn: 'MCH-9104', status: 'Normal', hours: 210, cycles: 140 },
+            { id: 'T-106', reg: '9M-AQA', position: 'MLG-RO', mfg: 'Michelin', model: 'Radial Air', sn: 'MCH-9105', status: 'Normal', hours: 210, cycles: 140 },
+            
+            { id: 'T-201', reg: '9M-MXB', position: 'NLG-L', mfg: 'Bridgestone', model: 'Flightstar', sn: 'BST-4411', status: 'Normal', hours: 310, cycles: 190 },
+            { id: 'T-202', reg: '9M-MXB', position: 'NLG-R', mfg: 'Bridgestone', model: 'Flightstar', sn: 'BST-4412', status: 'Warning', hours: 310, cycles: 190 },
+            { id: 'T-203', reg: '9M-MXB', position: 'MLG-L1', mfg: 'Michelin', model: 'Radial Air', sn: 'MCH-5510', status: 'Normal', hours: 520, cycles: 330 },
+            { id: 'T-204', reg: '9M-MXB', position: 'MLG-L2', mfg: 'Michelin', model: 'Radial Air', sn: 'MCH-5511', status: 'Normal', hours: 520, cycles: 330 },
+            { id: 'T-205', reg: '9M-MXB', position: 'MLG-R1', mfg: 'Bridgestone', model: 'Flightstar', sn: 'BST-7701', status: 'Critical', hours: 780, cycles: 510 },
+            { id: 'T-206', reg: '9M-MXB', position: 'MLG-R2', mfg: 'Bridgestone', model: 'Flightstar', sn: 'BST-7702', status: 'Normal', hours: 780, cycles: 510 }
+        ];
+
+        const INITIAL_PRESSURE_LOGS = [
+            { id: 'P-1', reg: '9M-AQA', position: 'MLG-LI', tireMfg: 'Bridgestone', tireSn: 'BST-3101', flight: 'MH101', date: '2026-08-20', time: '08:30', beforePsi: 195, afterPsi: 189, drop: 6, percentDrop: 3.08, inspector: 'Eng. H. Tan' },
+            { id: 'P-2', reg: '9M-AQA', position: 'MLG-LI', tireMfg: 'Bridgestone', tireSn: 'BST-3101', flight: 'MH102', date: '2026-08-22', time: '14:15', beforePsi: 192, afterPsi: 184, drop: 8, percentDrop: 4.16, inspector: 'Eng. H. Tan' },
+            { id: 'P-3', reg: '9M-AQA', position: 'MLG-LI', tireMfg: 'Bridgestone', tireSn: 'BST-3101', flight: 'MH103', date: '2026-08-24', time: '19:40', beforePsi: 188, afterPsi: 176, drop: 12, percentDrop: 6.38, inspector: 'Eng. K. Lee' },
+            { id: 'P-4', reg: '9M-MXB', position: 'MLG-R1', tireMfg: 'Bridgestone', tireSn: 'BST-7701', flight: 'MH501', date: '2026-08-21', time: '09:00', beforePsi: 200, afterPsi: 191, drop: 9, percentDrop: 4.50, inspector: 'Eng. S. Ahmad' },
+            { id: 'P-5', reg: '9M-MXB', position: 'MLG-R1', tireMfg: 'Bridgestone', tireSn: 'BST-7701', flight: 'MH502', date: '2026-08-23', time: '16:20', beforePsi: 190, afterPsi: 171, drop: 19, percentDrop: 10.00, inspector: 'Eng. S. Ahmad' }
+        ];
+
+        const INITIAL_CRACK_LOGS = [
+            { id: 'C-1', crackId: 'CRK-A320-001', reg: '9M-AQA', position: 'MLG-LI', tireMfg: 'Bridgestone', tireSn: 'BST-3101', flight: 'MH101', date: '2026-08-20', time: '09:00', stage: 'After Flight', location: 'Tread Groove 2', type: 'Sidewall/Tread Cut', beforeMm: 1.2, afterMm: 1.4, growth: 0.2, inspector: 'Eng. H. Tan', notes: 'Monitored per AMM task 32-41-00' },
+            { id: 'C-2', crackId: 'CRK-A320-001', reg: '9M-AQA', position: 'MLG-LI', tireMfg: 'Bridgestone', tireSn: 'BST-3101', flight: 'MH103', date: '2026-08-24', time: '20:15', stage: 'After Flight', location: 'Tread Groove 2', type: 'Sidewall/Tread Cut', beforeMm: 1.4, afterMm: 2.1, growth: 0.7, inspector: 'Eng. K. Lee', notes: 'Growth accelerated, flag for maintenance review' },
+            { id: 'C-3', crackId: 'CRK-737-004', reg: '9M-MXB', position: 'NLG-R', tireMfg: 'Bridgestone', tireSn: 'BST-4412', flight: 'MH502', date: '2026-08-23', time: '17:00', stage: 'Routine Inspection', location: 'Shoulder Area', type: 'Superficial Fissure', beforeMm: 0.8, afterMm: 1.1, growth: 0.3, inspector: 'Eng. S. Ahmad', notes: 'Within limits' }
+        ];
+
+        const Icon = ({ name, className = "w-5 h-5" }) => {
+            const icons = {
+                dashboard: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />,
+                plane: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />,
+                gauge: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />,
+                crack: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />,
+                trends: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />,
+                settings: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />,
+                alert: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />,
+                plus: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />,
+                check: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />,
+                info: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            };
+            return (
+                <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    {icons[name] || icons.info}
+                </svg>
+            );
+        };
+
+        const StatusBadge = ({ status }) => {
+            const styles = {
+                Normal: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                Warning: 'bg-amber-50 text-amber-700 border-amber-200',
+                Critical: 'bg-red-50 text-red-700 border-red-200',
+                Inspection: 'bg-teal-50 text-teal-700 border-teal-200'
+            };
+            const icons = { Normal: 'check', Warning: 'alert', Critical: 'alert', Inspection: 'info' };
+            return (
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border ${styles[status] || styles.Normal}`}>
+                    <Icon name={icons[status] || 'info'} className="w-3.5 h-3.5" />
+                    {status}
+                </span>
+            );
+        };
+
+        const LineChartSVG = ({ data, xKey, yKeys, threshold, height = 220 }) => {
+            if (!data || data.length === 0) return <div className="text-center py-10 text-slate-400 text-sm">No historical data available</div>;
+
+            const padding = { top: 20, right: 20, bottom: 30, left: 40 };
+            const width = 600;
+
+            const allYValues = data.flatMap(d => yKeys.map(k => d[k.key])).filter(v => v !== undefined);
+            if(threshold) allYValues.push(threshold.value);
+
+            const minY = Math.floor(Math.min(...allYValues) * 0.95);
+            const maxY = Math.ceil(Math.max(...allYValues) * 1.05);
+
+            const getX = (index) => padding.left + (index / (data.length - 1 || 1)) * (width - padding.left - padding.right);
+            const getY = (val) => padding.top + (1 - (val - minY) / (maxY - minY || 1)) * (height - padding.top - padding.bottom);
+
+            return (
+                <div className="w-full overflow-x-auto">
+                    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto text-xs font-sans">
+                        {[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => {
+                            const val = Math.round(minY + ratio * (maxY - minY));
+                            const yPos = getY(val);
+                            return (
+                                <g key={i}>
+                                    <line x1={padding.left} y1={yPos} x2={width - padding.right} y2={yPos} stroke="#e2e8f0" strokeDasharray="3 3" />
+                                    <text x={padding.left - 8} y={yPos + 4} textAnchor="end" fill="#64748b" className="text-[10px]">{val}</text>
+                                </g>
+                            );
+                        })}
+
+                        {threshold && (
+                            <g>
+                                <line x1={padding.left} y1={getY(threshold.value)} x2={width - padding.right} y2={getY(threshold.value)} stroke="#ef4444" strokeWidth="1.5" strokeDasharray="4 4" />
+                                <text x={width - padding.right} y={getY(threshold.value) - 4} textAnchor="end" fill="#ef4444" className="text-[10px] font-medium">{threshold.label}</text>
+                            </g>
+                        )}
+
+                        {data.map((d, i) => (
+                            <text key={i} x={getX(i)} y={height - 8} textAnchor="middle" fill="#64748b" className="text-[10px]">
+                                {d[xKey]}
+                            </text>
+                        ))}
+
+                        {yKeys.map((yConfig) => {
+                            const points = data.map((d, i) => `${getX(i)},${getY(d[yConfig.key])}`).join(' ');
+                            return (
+                                <g key={yConfig.key}>
+                                    <polyline fill="none" stroke={yConfig.color} strokeWidth="2.5" points={points} strokeLinecap="round" strokeLinejoin="round" />
+                                    {data.map((d, i) => (
+                                        <circle key={i} cx={getX(i)} cy={getY(d[yConfig.key])} r="4" fill={yConfig.color} className="transition-all hover:r-6 cursor-pointer">
+                                            <title>{`${d[xKey]} - ${yConfig.label}: ${d[yConfig.key]}`}</title>
+                                        </circle>
+                                    ))}
+                                </g>
+                            );
+                        })}
+                    </svg>
+                    <div className="flex justify-center gap-6 mt-2">
+                        {yKeys.map(k => (
+                            <div key={k.key} className="flex items-center gap-2 text-xs text-slate-600">
+                                <span className="w-3 h-3 rounded-full inline-block" style={{ backgroundColor: k.color }}></span>
+                                <span>{k.label}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const BarChartSVG = ({ data, xKey, bars, height = 220 }) => {
+            if (!data || data.length === 0) return <div className="text-center py-10 text-slate-400 text-sm">No data available</div>;
+            const width = 600;
+            const padding = { top: 20, right: 20, bottom: 40, left: 40 };
+
+            const maxVal = Math.max(...data.flatMap(d => bars.map(b => d[b.key]))) * 1.2 || 10;
+            const groupWidth = (width - padding.left - padding.right) / data.length;
+            const barWidth = groupWidth * 0.3;
+
+            return (
+                <div className="w-full overflow-x-auto">
+                    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto text-xs font-sans">
+                        {[0, 0.5, 1].map((ratio, i) => {
+                            const val = (maxVal * ratio).toFixed(1);
+                            const yPos = padding.top + (1 - ratio) * (height - padding.top - padding.bottom);
+                            return (
+                                <g key={i}>
+                                    <line x1={padding.left} y1={yPos} x2={width - padding.right} y2={yPos} stroke="#e2e8f0" strokeDasharray="3 3" />
+                                    <text x={padding.left - 6} y={yPos + 4} textAnchor="end" fill="#64748b" className="text-[10px]">{val}</text>
+                                </g>
+                            );
+                        })}
+
+                        {data.map((d, groupIdx) => {
+                            const groupX = padding.left + groupIdx * groupWidth + groupWidth * 0.15;
+                            return (
+                                <g key={groupIdx}>
+                                    <text x={groupX + (bars.length * barWidth)/2} y={height - 12} textAnchor="middle" fill="#475569" className="text-[10px] font-medium">
+                                        {d[xKey]}
+                                    </text>
+                                    {bars.map((b, barIdx) => {
+                                        const val = d[b.key] || 0;
+                                        const h = (val / maxVal) * (height - padding.top - padding.bottom);
+                                        const x = groupX + barIdx * (barWidth + 4);
+                                        const y = height - padding.bottom - h;
+                                        return (
+                                            <rect key={b.key} x={x} y={y} width={barWidth} height={h} fill={b.color} rx="3" className="transition-all hover:opacity-80">
+                                                <title>{`${d[xKey]} - ${b.label}: ${val}`}</title>
+                                            </rect>
+                                        );
+                                    })}
+                                </g>
+                            );
+                        })}
+                    </svg>
+                    <div className="flex justify-center gap-6 mt-2">
+                        {bars.map(b => (
+                            <div key={b.key} className="flex items-center gap-2 text-xs text-slate-600">
+                                <span className="w-3 h-3 rounded" style={{ backgroundColor: b.color }}></span>
+                                <span>{b.label}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const AircraftVisualLayout = ({ type, tires, selectedTireId, onSelectTire }) => {
+            const positions = TIRE_CONFIGS[type] || TIRE_CONFIGS['A320'];
+
+            const renderTireNode = (posName) => {
+                const tire = tires.find(t => t.position === posName);
+                const isSelected = tire && tire.id === selectedTireId;
+                
+                let statusColor = "bg-slate-700 text-slate-200 border-slate-800";
+                if (tire) {
+                    if (tire.status === 'Warning') statusColor = "bg-amber-500 text-white border-amber-600";
+                    if (tire.status === 'Critical') statusColor = "bg-red-600 text-white border-red-700";
+                    if (tire.status === 'Normal') statusColor = "bg-teal-600 text-white border-teal-700";
+                }
+
+                return (
+                    <div 
+                        onClick={() => tire && onSelectTire(tire)}
+                        className={`flex flex-col items-center justify-center w-12 h-20 rounded-lg border-2 shadow-sm cursor-pointer transition-transform transform hover:scale-105 ${statusColor} ${isSelected ? 'ring-4 ring-teal-500 ring-offset-2' : ''}`}
+                    >
+                        <span className="text-[10px] font-bold text-center px-0.5">{posName}</span>
+                        <span className="text-[9px] opacity-80 mt-1">{tire ? tire.mfg.substring(0,3) : 'N/A'}</span>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="bg-slate-900 rounded-xl p-6 text-white relative overflow-hidden flex flex-col items-center shadow-inner">
+                    <div className="text-xs uppercase font-semibold text-slate-400 tracking-widest mb-6 flex items-center gap-2">
+                        <span>Flight Axis</span>
+                        <span className="text-teal-400">▲</span>
+                    </div>
+
+                    <div className="mb-12 relative flex flex-col items-center">
+                        <span className="text-[11px] font-medium text-slate-400 mb-2">NOSE LANDING GEAR</span>
+                        <div className="flex gap-4 p-3 bg-slate-800/80 rounded-xl border border-slate-700 shadow-lg">
+                            {renderTireNode(positions[0])}
+                            {renderTireNode(positions[1])}
+                        </div>
+                    </div>
+
+                    <div className="w-full flex justify-around relative">
+                        <div className="flex flex-col items-center">
+                            <span className="text-[11px] font-medium text-slate-400 mb-2">LEFT MAIN GEAR</span>
+                            <div className="flex gap-3 p-3 bg-slate-800/80 rounded-xl border border-slate-700 shadow-lg">
+                                {renderTireNode(positions[2])}
+                                {renderTireNode(positions[3])}
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col items-center">
+                            <span className="text-[11px] font-medium text-slate-400 mb-2">RIGHT MAIN GEAR</span>
+                            <div className="flex gap-3 p-3 bg-slate-800/80 rounded-xl border border-slate-700 shadow-lg">
+                                {renderTireNode(positions[4])}
+                                {renderTireNode(positions[5])}
+                            </div>
+                        </div>
+                    </div>
+
+                    <p className="text-[11px] text-slate-500 mt-8 text-center">Click individual tire nodes for specific log history and data entry.</p>
+                </div>
+            );
+        };
+
+        const NewAircraftModal = ({ isOpen, onClose, onAddAircraft }) => {
+            const [reg, setReg] = useState('9M-XYZ');
+            const [model, setModel] = useState('A320');
+            const [mfg, setMfg] = useState('Airbus');
+            const [variant, setVariant] = useState('200');
+            const [sn, setSn] = useState('MSN-9999');
+            const [notes, setNotes] = useState('Newly inducted fleet aircraft');
+
+            if (!isOpen) return null;
+
+            const handleModelChange = (selectedModel) => {
+                setModel(selectedModel);
+                if (selectedModel.startsWith('737') || selectedModel.startsWith('777') || selectedModel === '787') {
+                    setMfg('Boeing');
+                } else if (selectedModel.startsWith('A3')) {
+                    setMfg('Airbus');
+                }
+            };
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                onAddAircraft({ reg, model, mfg, variant, sn, status: 'Active', notes });
+                onClose();
+            };
+
+            return (
+                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
+                        <div className="bg-slate-900 text-white p-5 flex justify-between items-center">
+                            <div>
+                                <h3 className="font-bold text-base">Register New Aircraft</h3>
+                                <p className="text-xs text-slate-400">Add airframe and generate initial tire slots</p>
+                            </div>
+                            <button onClick={onClose} className="text-slate-400 hover:text-white text-lg font-bold px-2">&times;</button>
+                        </div>
+                        <form onSubmit={handleSubmit} className="p-6 space-y-4 text-xs">
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block font-medium text-slate-700 mb-1">Registration</label>
+                                    <input type="text" value={reg} onChange={(e) => setReg(e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2.5 font-bold text-slate-800" />
+                                </div>
+                                <div>
+                                    <label className="block font-medium text-slate-700 mb-1">Manufacturer</label>
+                                    <select value={mfg} onChange={(e) => setMfg(e.target.value)} className="w-full border border-slate-300 rounded-lg p-2.5 bg-slate-50 font-medium">
+                                        <option value="Airbus">Airbus</option>
+                                        <option value="Boeing">Boeing</option>
+                                        <option value="Embraer">Embraer</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block font-medium text-slate-700 mb-1">Aircraft Model</label>
+                                    <select value={model} onChange={(e) => handleModelChange(e.target.value)} className="w-full border border-slate-300 rounded-lg p-2.5 bg-slate-50 font-medium">
+                                        <option value="A320">A320 / A320neo</option>
+                                        <option value="737-800">737-800 / MAX</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block font-medium text-slate-700 mb-1">Variant</label>
+                                    <input type="text" value={variant} onChange={(e) => setVariant(e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2.5" />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block font-medium text-slate-700 mb-1">Serial Number (MSN / Line No)</label>
+                                <input type="text" value={sn} onChange={(e) => setSn(e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2.5 font-mono" />
+                            </div>
+
+                            <div>
+                                <label className="block font-medium text-slate-700 mb-1">Induction Notes</label>
+                                <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full border border-slate-300 rounded-lg p-2.5" />
+                            </div>
+
+                            <div className="flex gap-3 pt-2">
+                                <button type="button" onClick={onClose} className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 rounded-lg transition-colors">
+                                    Cancel
+                                </button>
+                                <button type="submit" className="flex-1 bg-teal-600 hover:bg-teal-700 text-white font-semibold py-2.5 rounded-lg shadow-sm transition-colors">
+                                    Register Aircraft
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+        const DashboardView = ({ fleet, tires, selectedAcReg, setSelectedAcReg, onSelectTire, onNavigate }) => {
+            const [schematicAcReg, setSchematicAcReg] = useState(fleet[0]?.reg || '');
+
+            useEffect(() => {
+                if (selectedAcReg !== 'ALL') {
+                    setSchematicAcReg(selectedAcReg);
+                }
+            }, [selectedAcReg]);
+
+            const filteredTires = useMemo(() => {
+                if (selectedAcReg === 'ALL') return tires;
+                return tires.filter(t => t.reg === selectedAcReg);
+            }, [tires, selectedAcReg]);
+
+            const stats = useMemo(() => ({
+                totalAc: fleet.length,
+                totalTires: filteredTires.length,
+                normal: filteredTires.filter(t => t.status === 'Normal').length,
+                warning: filteredTires.filter(t => t.status === 'Warning').length,
+                critical: filteredTires.filter(t => t.status === 'Critical').length
+            }), [fleet, filteredTires]);
+
+            const currentAc = fleet.find(a => a.reg === selectedAcReg) || fleet[0];
+
+            return (
+                <div className="space-y-6">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                        <div>
+                            <h2 className="text-xl font-bold text-slate-800">Fleet Condition Overview</h2>
+                            <p className="text-xs text-slate-500 mt-0.5">Real-time status tracking for monitored aircraft tires</p>
+                        </div>
+                        <div className="flex items-center gap-3 w-full sm:w-auto">
+                            <label className="text-xs font-semibold text-slate-600 whitespace-nowrap">Aircraft Filter:</label>
+                            <select 
+                                value={selectedAcReg} 
+                                onChange={(e) => setSelectedAcReg(e.target.value)}
+                                className="w-full sm:w-auto bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-700 font-medium focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                            >
+                                <option value="ALL">All Fleet (Combined)</option>
+                                {fleet.map(ac => (
+                                    <option key={ac.reg} value={ac.reg}>{ac.reg} ({ac.mfg} {ac.model})</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+                            <div className="p-3 rounded-lg bg-slate-100 text-slate-700"><Icon name="plane" /></div>
+                            <div>
+                                <p className="text-xs text-slate-500 font-medium">Aircraft Count</p>
+                                <p className="text-xl font-bold text-slate-800">{stats.totalAc}</p>
+                            </div>
+                        </div>
+                        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+                            <div className="p-3 rounded-lg bg-teal-50 text-teal-600"><Icon name="gauge" /></div>
+                            <div>
+                                <p className="text-xs text-slate-500 font-medium">Monitored Tires</p>
+                                <p className="text-xl font-bold text-slate-800">{stats.totalTires}</p>
+                            </div>
+                        </div>
+                        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+                            <div className="p-3 rounded-lg bg-emerald-50 text-emerald-600"><Icon name="check" /></div>
+                            <div>
+                                <p className="text-xs text-slate-500 font-medium">Normal Status</p>
+                                <p className="text-xl font-bold text-emerald-700">{stats.normal}</p>
+                            </div>
+                        </div>
+                        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+                            <div className="p-3 rounded-lg bg-amber-50 text-amber-600"><Icon name="alert" /></div>
+                            <div>
+                                <p className="text-xs text-slate-500 font-medium">Warning Threshold</p>
+                                <p className="text-xl font-bold text-amber-700">{stats.warning}</p>
+                            </div>
+                        </div>
+                        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+                            <div className="p-3 rounded-lg bg-red-50 text-red-600"><Icon name="alert" /></div>
+                            <div>
+                                <p className="text-xs text-slate-500 font-medium">Critical Action</p>
+                                <p className="text-xl font-bold text-red-700">{stats.critical}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div className="lg:col-span-1 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-100">
+                                <div>
+                                    <h3 className="text-sm font-bold text-slate-800">Schematic Layout</h3>
+                                    <p className="text-[11px] text-slate-400">Select aircraft to inspect tire layout</p>
+                                </div>
+                                <select 
+                                    value={schematicAcReg} 
+                                    onChange={(e) => setSchematicAcReg(e.target.value)}
+                                    className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1 text-xs text-slate-700 font-semibold focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                                >
+                                    {fleet.map(ac => (
+                                        <option key={ac.reg} value={ac.reg}>
+                                            {ac.reg} ({ac.mfg} {ac.model})
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            {(() => {
+                                const activeSchematicAc = fleet.find(a => a.reg === schematicAcReg) || fleet[0];
+                                return (
+                                    <AircraftVisualLayout 
+                                        type={activeSchematicAc ? activeSchematicAc.model : 'A320'} 
+                                        tires={tires.filter(t => t.reg === (activeSchematicAc ? activeSchematicAc.reg : ''))} 
+                                        onSelectTire={onSelectTire} 
+                                    />
+                                );
+                            })()}
+                        </div>
+
+                        <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                            <div className="p-5 border-b border-slate-200 flex justify-between items-center">
+                                <h3 className="text-sm font-bold text-slate-800">Tire Condition Register</h3>
+                                <button 
+                                    onClick={() => onNavigate('pressure')}
+                                    className="text-xs text-teal-600 font-semibold hover:underline flex items-center gap-1"
+                                >
+                                    Record New Reading &rarr;
+                                </button>
+                            </div>
+                            <div className="overflow-x-auto flex-1">
+                                <table className="w-full text-left text-xs">
+                                    <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase">
+                                        <tr>
+                                            <th className="px-4 py-3">Aircraft</th>
+                                            <th className="px-4 py-3">Position</th>
+                                            <th className="px-4 py-3">Brand / Model</th>
+                                            <th className="px-4 py-3">Serial No</th>
+                                            <th className="px-4 py-3">Condition Status</th>
+                                            <th className="px-4 py-3 text-right">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-200 text-slate-700">
+                                        {filteredTires.map((tire) => (
+                                            <tr key={tire.id} className="hover:bg-slate-50 transition-colors">
+                                                <td className="px-4 py-3 font-semibold text-slate-800">{tire.reg}</td>
+                                                <td className="px-4 py-3 font-medium">{tire.position}</td>
+                                                <td className="px-4 py-3">{tire.mfg} <span className="text-slate-400">({tire.model})</span></td>
+                                                <td className="px-4 py-3 font-mono text-slate-500">{tire.sn}</td>
+                                                <td className="px-4 py-3"><StatusBadge status={tire.status} /></td>
+                                                <td className="px-4 py-3 text-right">
+                                                    <button 
+                                                        onClick={() => onSelectTire(tire)}
+                                                        className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded transition-colors"
+                                                    >
+                                                        Details
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const PressureMonitoringView = ({ fleet, tires, pressureLogs, onAddLog, limits }) => {
+            const [selectedReg, setSelectedReg] = useState(fleet[0].reg);
+            const [position, setPosition] = useState(TIRE_CONFIGS['A320'][0]);
+            const [tireMfg, setTireMfg] = useState('Bridgestone');
+            const [tireSn, setTireSn] = useState('');
+            const [flight, setFlight] = useState('MH104');
+            const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+            const [time, setTime] = useState('10:00');
+            const [beforePsi, setBeforePsi] = useState(190);
+            const [afterPsi, setAfterPsi] = useState(180);
+            const [inspector, setInspector] = useState('Eng. Tech');
+            const [toast, setToast] = useState(null);
+
+            useEffect(() => {
+                const currentTire = tires.find(t => t.reg === selectedReg && t.position === position);
+                if (currentTire) {
+                    setTireSn(currentTire.sn);
+                    setTireMfg(currentTire.mfg);
+                } else {
+                    setTireSn('');
+                }
+            }, [selectedReg, position, tires]);
+
+            const selectedAc = fleet.find(a => a.reg === selectedReg) || fleet[0];
+            const activeLimits = limits[selectedAc.mfg] || limits.Airbus;
+
+            const filteredLogs = pressureLogs.filter(l => l.reg === selectedReg);
+
+            const handleCalculate = (e) => {
+                e.preventDefault();
+                const drop = parseFloat(beforePsi) - parseFloat(afterPsi);
+                const percent = ((drop / parseFloat(beforePsi)) * 100).toFixed(2);
+
+                let status = 'Normal';
+                if (drop >= activeLimits.criticalDropPsi) status = 'Critical';
+                else if (drop >= activeLimits.warningDropPsi) status = 'Warning';
+
+                const newLog = {
+                    id: `P-${Date.now()}`,
+                    reg: selectedReg,
+                    position,
+                    tireMfg,
+                    tireSn,
+                    flight,
+                    date,
+                    time,
+                    beforePsi: parseFloat(beforePsi),
+                    afterPsi: parseFloat(afterPsi),
+                    drop,
+                    percentDrop: parseFloat(percent),
+                    inspector
+                };
+
+                onAddLog(newLog, status);
+                setToast({ message: `Pressure log recorded. Calculated Drop: ${drop} PSI (${percent}%). Status: ${status}`, type: status });
+                setTimeout(() => setToast(null), 5000);
+            };
+
+            const currentPositions = TIRE_CONFIGS[selectedAc.model] || TIRE_CONFIGS['A320'];
+
+            return (
+                <div className="space-y-6">
+                    {toast && (
+                        <div className={`p-4 rounded-xl border text-sm font-medium flex items-center justify-between ${toast.type === 'Critical' ? 'bg-red-50 text-red-800 border-red-200' : toast.type === 'Warning' ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-emerald-50 text-emerald-800 border-emerald-200'}`}>
+                            <span>{toast.message}</span>
+                            <button onClick={() => setToast(null)} className="text-slate-500 font-bold">&times;</button>
+                        </div>
+                    )}
+
+                    <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3 text-amber-900 text-xs leading-relaxed">
+                        <Icon name="alert" className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                            <span className="font-semibold">Nitrogen Servicing Protocol Advisory ({selectedAc.mfg}):</span>
+                            <p className="mt-0.5">If pressure drop exceeds configured threshold ({activeLimits.warningDropPsi} PSI), inspect tire valve stem and wheel half assembly for leak indicators prior to nitrogen replenishment per applicable AMM reference.</p>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+                            <h3 className="text-base font-bold text-slate-800 border-b border-slate-200 pb-3">Record Flight Tire Pressure</h3>
+                            <form onSubmit={handleCalculate} className="space-y-4 text-xs">
+                                <div>
+                                    <label className="block font-medium text-slate-700 mb-1">Aircraft Registration</label>
+                                    <select 
+                                        value={selectedReg} 
+                                        onChange={(e) => { 
+                                            setSelectedReg(e.target.value); 
+                                            const ac = fleet.find(a => a.reg === e.target.value);
+                                            setPosition(TIRE_CONFIGS[ac?.model || 'A320'][0]); 
+                                        }} 
+                                        className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-slate-800 font-medium"
+                                    >
+                                        {fleet.map(ac => <option key={ac.reg} value={ac.reg}>{ac.reg} ({ac.mfg} {ac.model})</option>)}
+                                    </select>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Tire Position</label>
+                                        <select value={position} onChange={(e) => setPosition(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5">
+                                            {currentPositions.map(p => <option key={p} value={p}>{p}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Tire Manufacturer</label>
+                                        <select value={tireMfg} onChange={(e) => setTireMfg(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 font-medium">
+                                            {MANUFACTURER_OPTIONS.map(mfg => <option key={mfg} value={mfg}>{mfg}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Tire S/N</label>
+                                        <input type="text" value={tireSn} onChange={(e) => setTireSn(e.target.value)} required placeholder="e.g. BST-1234" className="w-full bg-white border border-slate-300 rounded-lg p-2.5 font-mono text-slate-800" />
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-3 gap-3">
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Flight No.</label>
+                                        <input type="text" value={flight} onChange={(e) => setFlight(e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2.5" />
+                                    </div>
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Inspection Date</label>
+                                        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2.5" />
+                                    </div>
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Time</label>
+                                        <input type="time" value={time} onChange={(e) => setTime(e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2.5" />
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                    <div>
+                                        <label className="block font-semibold text-slate-700 mb-1">Before Flight (PSI)</label>
+                                        <input type="number" step="0.1" value={beforePsi} onChange={(e) => setBeforePsi(e.target.value)} required className="w-full bg-white border border-slate-300 rounded-lg p-2 text-sm font-bold text-slate-800" />
+                                    </div>
+                                    <div>
+                                        <label className="block font-semibold text-slate-700 mb-1">After Flight (PSI)</label>
+                                        <input type="number" step="0.1" value={afterPsi} onChange={(e) => setAfterPsi(e.target.value)} required className="w-full bg-white border border-slate-300 rounded-lg p-2 text-sm font-bold text-slate-800" />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block font-medium text-slate-700 mb-1">Technician / Inspector</label>
+                                    <input type="text" value={inspector} onChange={(e) => setInspector(e.target.value)} required placeholder="e.g. Tech A. Rahman" className="w-full border border-slate-300 rounded-lg p-2.5" />
+                                </div>
+
+                                <button type="submit" className="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold py-2.5 rounded-lg shadow-sm transition-colors text-sm">
+                                    Calculate & Log Measurement
+                                </button>
+                            </form>
+                        </div>
+
+                        <div className="lg:col-span-2 space-y-6">
+                            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                                <h3 className="text-sm font-bold text-slate-800 mb-2">Pressure Drop Historical Trend ({selectedReg})</h3>
+                                <LineChartSVG 
+                                    data={filteredLogs} 
+                                    xKey="flight" 
+                                    yKeys={[
+                                        { key: 'beforePsi', label: 'Before Flight PSI', color: '#0d9488' },
+                                        { key: 'afterPsi', label: 'After Flight PSI', color: '#f59e0b' }
+                                    ]} 
+                                    threshold={{ value: 180, label: 'Min Pressure Limit' }}
+                                />
+                            </div>
+
+                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                                <div className="p-4 border-b border-slate-200">
+                                    <h3 className="text-sm font-bold text-slate-800">Pressure Log History</h3>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left text-xs">
+                                        <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
+                                            <tr>
+                                                <th className="p-3">Date & Time</th>
+                                                <th className="p-3">Flight</th>
+                                                <th className="p-3">Pos</th>
+                                                <th className="p-3">Brand & S/N</th>
+                                                <th className="p-3">Before / After</th>
+                                                <th className="p-3">Drop (PSI)</th>
+                                                <th className="p-3">Tech / Inspector</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-200 text-slate-700">
+                                            {filteredLogs.map(log => (
+                                                <tr key={log.id} className="hover:bg-slate-50">
+                                                    <td className="p-3 font-medium whitespace-nowrap">{log.date} <span className="text-slate-400">({log.time || '10:00'})</span></td>
+                                                    <td className="p-3 font-semibold">{log.flight}</td>
+                                                    <td className="p-3">{log.position}</td>
+                                                    <td className="p-3">
+                                                        <div className="flex flex-col items-start">
+                                                            <span className="px-2 py-0.5 bg-slate-100 rounded text-[11px] font-medium text-slate-700">{log.tireMfg || 'N/A'}</span>
+                                                            {log.tireSn && <span className="text-[10px] text-slate-500 mt-1 font-mono">{log.tireSn}</span>}
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-3 font-mono">{log.beforePsi} / {log.afterPsi} PSI</td>
+                                                    <td className={`p-3 font-bold ${log.drop >= activeLimits.warningDropPsi ? 'text-amber-600' : 'text-slate-700'}`}>
+                                                        -{log.drop} PSI ({log.percentDrop}%)
+                                                    </td>
+                                                    <td className="p-3">{log.inspector}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const CrackMonitoringView = ({ fleet, tires, crackLogs, onAddCrack, limits }) => {
+            const [selectedReg, setSelectedReg] = useState(fleet[0].reg);
+            const [crackId, setCrackId] = useState('CRK-A320-002');
+            const [position, setPosition] = useState(TIRE_CONFIGS['A320'][2]);
+            const [tireMfg, setTireMfg] = useState('Bridgestone');
+            const [tireSn, setTireSn] = useState('');
+            const [flight, setFlight] = useState('MH104');
+            const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+            const [time, setTime] = useState('11:30');
+            const [stage, setStage] = useState('After Flight');
+            const [locationArea, setLocationArea] = useState('Tread Groove');
+            const [crackType, setCrackType] = useState('Sidewall Cut');
+            const [beforeMm, setBeforeMm] = useState(1.2);
+            const [afterMm, setAfterMm] = useState(1.6);
+            const [inspector, setInspector] = useState('Eng. Tech');
+            const [notes, setNotes] = useState('Monitored per AMM task');
+            const [toast, setToast] = useState(null);
+
+            useEffect(() => {
+                const currentTire = tires.find(t => t.reg === selectedReg && t.position === position);
+                if (currentTire) {
+                    setTireSn(currentTire.sn);
+                    setTireMfg(currentTire.mfg);
+                } else {
+                    setTireSn('');
+                }
+            }, [selectedReg, position, tires]);
+
+            const selectedAc = fleet.find(a => a.reg === selectedReg) || fleet[0];
+            const activeLimits = limits[selectedAc.mfg] || limits.Airbus;
+
+            const filteredCracks = crackLogs.filter(c => c.reg === selectedReg);
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                const growth = parseFloat((parseFloat(afterMm) - parseFloat(beforeMm)).toFixed(2));
+
+                let status = 'Normal';
+                if (growth >= activeLimits.criticalCrackGrowthMm || parseFloat(afterMm) >= activeLimits.criticalCrackLengthMm) {
+                    status = 'Critical';
+                } else if (growth >= activeLimits.warningCrackGrowthMm) {
+                    status = 'Warning';
+                }
+
+                const newCrack = {
+                    id: `C-${Date.now()}`,
+                    crackId,
+                    reg: selectedReg,
+                    position,
+                    tireMfg,
+                    tireSn,
+                    flight,
+                    date,
+                    time,
+                    stage,
+                    location: locationArea,
+                    type: crackType,
+                    beforeMm: parseFloat(beforeMm),
+                    afterMm: parseFloat(afterMm),
+                    growth,
+                    inspector,
+                    notes
+                };
+
+                onAddCrack(newCrack, status);
+                setToast({ message: `Crack inspection recorded. Growth: +${growth} mm. Status: ${status}`, type: status });
+                setTimeout(() => setToast(null), 5000);
+            };
+
+            const currentPositions = TIRE_CONFIGS[selectedAc.model] || TIRE_CONFIGS['A320'];
+
+            return (
+                <div className="space-y-6">
+                    {toast && (
+                        <div className={`p-4 rounded-xl border text-sm font-medium flex items-center justify-between ${toast.type === 'Critical' ? 'bg-red-50 text-red-800 border-red-200' : toast.type === 'Warning' ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-emerald-50 text-emerald-800 border-emerald-200'}`}>
+                            <span>{toast.message}</span>
+                            <button onClick={() => setToast(null)} className="text-slate-500 font-bold">&times;</button>
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+                            <h3 className="text-base font-bold text-slate-800 border-b border-slate-200 pb-3">Log Tire Crack Progression</h3>
+                            <form onSubmit={handleSubmit} className="space-y-3 text-xs">
+                                <div>
+                                    <label className="block font-medium text-slate-700 mb-1">Aircraft Registration</label>
+                                    <select 
+                                        value={selectedReg} 
+                                        onChange={(e) => { 
+                                            setSelectedReg(e.target.value); 
+                                            const ac = fleet.find(a => a.reg === e.target.value);
+                                            setPosition(TIRE_CONFIGS[ac?.model || 'A320'][2]); 
+                                        }} 
+                                        className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 font-medium"
+                                    >
+                                        {fleet.map(ac => <option key={ac.reg} value={ac.reg}>{ac.reg} ({ac.mfg} {ac.model})</option>)}
+                                    </select>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Crack ID / Ref</label>
+                                        <input type="text" value={crackId} onChange={(e) => setCrackId(e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2" />
+                                    </div>
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Tire Position</label>
+                                        <select value={position} onChange={(e) => setPosition(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2">
+                                            {currentPositions.map(p => <option key={p} value={p}>{p}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Tire Brand</label>
+                                        <select value={tireMfg} onChange={(e) => setTireMfg(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2">
+                                            {MANUFACTURER_OPTIONS.map(mfg => <option key={mfg} value={mfg}>{mfg}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Tire S/N</label>
+                                        <input type="text" value={tireSn} onChange={(e) => setTireSn(e.target.value)} required placeholder="e.g. BST-1234" className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-slate-800" />
+                                    </div>
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Inspection Stage</label>
+                                        <select value={stage} onChange={(e) => setStage(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2">
+                                            <option value="After Flight">After Flight</option>
+                                            <option value="Routine Inspection">Routine Inspection</option>
+                                            <option value="Base Maintenance">Base Maintenance</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-3 gap-2">
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Flight</label>
+                                        <input type="text" value={flight} onChange={(e) => setFlight(e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2" />
+                                    </div>
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Date</label>
+                                        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2" />
+                                    </div>
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Time</label>
+                                        <input type="time" value={time} onChange={(e) => setTime(e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2" />
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Location Area</label>
+                                        <input type="text" value={locationArea} onChange={(e) => setLocationArea(e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2" />
+                                    </div>
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Damage Type</label>
+                                        <input type="text" value={crackType} onChange={(e) => setCrackType(e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2" />
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                    <div>
+                                        <label className="block font-semibold text-slate-700 mb-1">Previous Length (mm)</label>
+                                        <input type="number" step="0.1" value={beforeMm} onChange={(e) => setBeforeMm(e.target.value)} required className="w-full bg-white border border-slate-300 rounded-lg p-2 font-bold text-slate-800" />
+                                    </div>
+                                    <div>
+                                        <label className="block font-semibold text-slate-700 mb-1">Current Length (mm)</label>
+                                        <input type="number" step="0.1" value={afterMm} onChange={(e) => setAfterMm(e.target.value)} required className="w-full bg-white border border-slate-300 rounded-lg p-2 font-bold text-slate-800" />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block font-medium text-slate-700 mb-1">Inspector / Technician</label>
+                                    <input type="text" value={inspector} onChange={(e) => setInspector(e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2" />
+                                </div>
+
+                                <div>
+                                    <label className="block font-medium text-slate-700 mb-1">AMM / Maintenance Notes</label>
+                                    <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full border border-slate-300 rounded-lg p-2" />
+                                </div>
+
+                                <button type="submit" className="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold py-2.5 rounded-lg shadow-sm transition-colors text-sm">
+                                    Record Crack Measurement
+                                </button>
+                            </form>
+                        </div>
+
+                        <div className="lg:col-span-2 space-y-6">
+                            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                                <h3 className="text-sm font-bold text-slate-800 mb-2">Crack Growth History ({selectedReg})</h3>
+                                <LineChartSVG 
+                                    data={filteredCracks} 
+                                    xKey="crackId" 
+                                    yKeys={[
+                                        { key: 'beforeMm', label: 'Previous Length (mm)', color: '#0d9488' },
+                                        { key: 'afterMm', label: 'Current Length (mm)', color: '#ef4444' }
+                                    ]} 
+                                    threshold={{ value: activeLimits.criticalCrackLengthMm, label: 'Critical Removal Limit' }}
+                                />
+                            </div>
+
+                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                                <div className="p-4 border-b border-slate-200">
+                                    <h3 className="text-sm font-bold text-slate-800">Crack Inspection Register</h3>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left text-xs">
+                                        <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
+                                            <tr>
+                                                <th className="p-3">Date</th>
+                                                <th className="p-3">Crack ID</th>
+                                                <th className="p-3">Pos</th>
+                                                <th className="p-3">Brand & S/N</th>
+                                                <th className="p-3">Location / Type</th>
+                                                <th className="p-3">Size (Prev &rarr; Curr)</th>
+                                                <th className="p-3">Growth</th>
+                                                <th className="p-3">Inspector</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-200 text-slate-700">
+                                            {filteredCracks.map(crack => (
+                                                <tr key={crack.id} className="hover:bg-slate-50">
+                                                    <td className="p-3 font-medium whitespace-nowrap">{crack.date}</td>
+                                                    <td className="p-3 font-mono font-bold text-slate-800">{crack.crackId}</td>
+                                                    <td className="p-3">{crack.position}</td>
+                                                    <td className="p-3">
+                                                        <div className="flex flex-col items-start">
+                                                            <span className="px-2 py-0.5 bg-slate-100 rounded text-[11px] font-medium text-slate-700">{crack.tireMfg || 'N/A'}</span>
+                                                            {crack.tireSn && <span className="text-[10px] text-slate-500 mt-1 font-mono">{crack.tireSn}</span>}
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-3">{crack.location} <span className="text-slate-400">({crack.type})</span></td>
+                                                    <td className="p-3 font-mono">{crack.beforeMm} mm &rarr; {crack.afterMm} mm</td>
+                                                    <td className={`p-3 font-bold ${crack.growth >= activeLimits.warningCrackGrowthMm ? 'text-amber-600' : 'text-emerald-700'}`}>
+                                                        +{crack.growth} mm
+                                                    </td>
+                                                    <td className="p-3">{crack.inspector}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const TrendAnalysisView = ({ pressureLogs, crackLogs, tires }) => {
+            // 1. Average Pressure Drop per Manufacturer
+            const pressureDropByBrand = useMemo(() => {
+                const map = {};
+                pressureLogs.forEach(l => {
+                    const mfg = l.tireMfg || 'Unassigned';
+                    if (!map[mfg]) map[mfg] = { totalDrop: 0, count: 0 };
+                    map[mfg].totalDrop += l.drop;
+                    map[mfg].count += 1;
+                });
+                return Object.keys(map).map(mfg => ({
+                    brand: mfg,
+                    avgDrop: parseFloat((map[mfg].totalDrop / map[mfg].count).toFixed(1))
+                }));
+            }, [pressureLogs]);
+
+            // 2. Average Crack Growth per Manufacturer
+            const crackGrowthByBrand = useMemo(() => {
+                const map = {};
+                crackLogs.forEach(c => {
+                    const mfg = c.tireMfg || 'Unassigned';
+                    if (!map[mfg]) map[mfg] = { totalGrowth: 0, count: 0 };
+                    map[mfg].totalGrowth += c.growth;
+                    map[mfg].count += 1;
+                });
+                return Object.keys(map).map(mfg => ({
+                    brand: mfg,
+                    avgGrowth: parseFloat((map[mfg].totalGrowth / map[mfg].count).toFixed(2))
+                }));
+            }, [crackLogs]);
+
+            // 3. Pressure Drop by Position/Gear Type (NLG vs MLG)
+            const pressureDropByPosition = useMemo(() => {
+                const map = {};
+                pressureLogs.forEach(l => {
+                    const isNose = l.position.startsWith('NLG');
+                    const posGroup = isNose ? 'Nose Gear (NLG)' : 'Main Gear (MLG)';
+                    if (!map[posGroup]) map[posGroup] = { totalDrop: 0, count: 0 };
+                    map[posGroup].totalDrop += l.drop;
+                    map[posGroup].count += 1;
+                });
+                return Object.keys(map).map(pos => ({
+                    positionGroup: pos,
+                    avgDrop: parseFloat((map[pos].totalDrop / map[pos].count).toFixed(1))
+                }));
+            }, [pressureLogs]);
+
+            // 4. Cumulative Crack Growth by Location (Tread Groove vs Shoulder vs Sidewall)
+            const crackGrowthByLocation = useMemo(() => {
+                const map = {};
+                crackLogs.forEach(c => {
+                    const loc = c.location || 'General';
+                    if (!map[loc]) map[loc] = { totalGrowth: 0, count: 0 };
+                    map[loc].totalGrowth += c.growth;
+                    map[loc].count += 1;
+                });
+                return Object.keys(map).map(loc => ({
+                    location: loc,
+                    avgGrowth: parseFloat((map[loc].totalGrowth / map[loc].count).toFixed(2))
+                }));
+            }, [crackLogs]);
+
+            // 5. Fleet Tire Operating Hours vs Status Distribution Data for Scatter-like grouping
+            const tireHoursDistribution = useMemo(() => {
+                const brackets = { '<300 hrs': 0, '300-500 hrs': 0, '500-700 hrs': 0, '>700 hrs': 0 };
+                tires.forEach(t => {
+                    if (t.hours < 300) brackets['<300 hrs']++;
+                    else if (t.hours <= 500) brackets['300-500 hrs']++;
+                    else if (t.hours <= 700) brackets['500-700 hrs']++;
+                    else brackets['>700 hrs']++;
+                });
+                return Object.keys(brackets).map(bracket => ({
+                    bracket,
+                    count: brackets[bracket]
+                }));
+            }, [tires]);
+
+            return (
+                <div className="space-y-6">
+                    <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                        <h2 className="text-xl font-bold text-slate-800">Fleet Tire Trend Analytics &amp; Diagnostic Intelligence</h2>
+                        <p className="text-xs text-slate-500 mt-0.5">Comprehensive multi-parameter performance metrics across manufacturers, landing gear positions, and damage locations</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        {/* Chart 1 */}
+                        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                            <h3 className="text-sm font-bold text-slate-800 mb-1">Average Pressure Drop per Flight by Manufacturer</h3>
+                            <p className="text-[11px] text-slate-400 mb-4">Compares nominal pressure decay rates across tire brands</p>
+                            <BarChartSVG 
+                                data={pressureDropByBrand} 
+                                xKey="brand" 
+                                bars={[{ key: 'avgDrop', label: 'Avg PSI Drop', color: '#0d9488' }]} 
+                            />
+                        </div>
+
+                        {/* Chart 2 */}
+                        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                            <h3 className="text-sm font-bold text-slate-800 mb-1">Average Crack Growth per Inspection by Manufacturer</h3>
+                            <p className="text-[11px] text-slate-400 mb-4">Evaluates compound structural resilience and fissure propagation</p>
+                            <BarChartSVG 
+                                data={crackGrowthByBrand} 
+                                xKey="brand" 
+                                bars={[{ key: 'avgGrowth', label: 'Avg Crack Growth (mm)', color: '#f59e0b' }]} 
+                            />
+                        </div>
+
+                        {/* Chart 3 */}
+                        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                            <h3 className="text-sm font-bold text-slate-800 mb-1">Pressure Drop Severity: Nose vs. Main Landing Gear</h3>
+                            <p className="text-[11px] text-slate-400 mb-4">Differential analysis highlighting braking vs. steering load impacts</p>
+                            <BarChartSVG 
+                                data={pressureDropByPosition} 
+                                xKey="positionGroup" 
+                                bars={[{ key: 'avgDrop', label: 'Avg PSI Drop (Gear)', color: '#3b82f6' }]} 
+                            />
+                        </div>
+
+                        {/* Chart 4 */}
+                        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                            <h3 className="text-sm font-bold text-slate-800 mb-1">Crack Growth Rate by Structural Damage Location</h3>
+                            <p className="text-[11px] text-slate-400 mb-4">Tracks propagation rates across tread grooves, shoulders, and sidewalls</p>
+                            <BarChartSVG 
+                                data={crackGrowthByLocation} 
+                                xKey="location" 
+                                bars={[{ key: 'avgGrowth', label: 'Avg Growth Rate (mm)', color: '#ef4444' }]} 
+                            />
+                        </div>
+                    </div>
+
+                    {/* Additional Summary Analytics Card */}
+                    <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                        <h3 className="text-sm font-bold text-slate-800 mb-3">Tire Operational Hours Distribution Across Active Fleet</h3>
+                        <p className="text-xs text-slate-500 mb-4">Overview of tire lifecycle stages to anticipate upcoming scheduled removals and retreads.</p>
+                        <BarChartSVG 
+                            data={tireHoursDistribution} 
+                            xKey="bracket" 
+                            bars={[{ key: 'count', label: 'Active Tire Count', color: '#8b5cf6' }]} 
+                        />
+                    </div>
+                </div>
+            );
+        };
+
+        const SettingsView = ({ limits, onUpdateLimits }) => {
+            const [localLimits, setLocalLimits] = useState(limits);
+            const [saved, setSaved] = useState(false);
+
+            const handleChange = (mfg, field, value) => {
+                setLocalLimits({
+                    ...localLimits,
+                    [mfg]: {
+                        ...localLimits[mfg],
+                        [field]: parseFloat(value) || 0
+                    }
+                });
+            };
+
+            const handleSave = (e) => {
+                e.preventDefault();
+                onUpdateLimits(localLimits);
+                setSaved(true);
+                setTimeout(() => setSaved(false), 4000);
+            };
+
+            return (
+                <div className="space-y-6 max-w-4xl mx-auto">
+                    <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                        <h2 className="text-xl font-bold text-slate-800">Maintenance Manual (AMM) Limits &amp; Thresholds</h2>
+                        <p className="text-xs text-slate-500 mt-0.5">Configure warning and critical thresholds per aircraft manufacturer guidelines</p>
+                    </div>
+
+                    {saved && (
+                        <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm font-medium">
+                            Limits updated successfully across all fleet monitoring algorithms.
+                        </div>
+                    )}
+
+                    <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {Object.keys(localLimits).map(mfg => (
+                            <div key={mfg} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+                                <h3 className="text-base font-bold text-slate-800 border-b border-slate-200 pb-3 flex items-center justify-between">
+                                    <span>{mfg} Fleet Limits</span>
+                                    <span className="text-xs font-normal text-slate-400">{localLimits[mfg].referenceSource}</span>
+                                </h3>
+
+                                <div className="space-y-3 text-xs">
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Warning Pressure Drop (PSI)</label>
+                                        <input type="number" step="0.5" value={localLimits[mfg].warningDropPsi} onChange={(e) => handleChange(mfg, 'warningDropPsi', e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2.5 font-bold text-slate-800" />
+                                    </div>
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Critical Pressure Drop (PSI)</label>
+                                        <input type="number" step="0.5" value={localLimits[mfg].criticalDropPsi} onChange={(e) => handleChange(mfg, 'criticalDropPsi', e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2.5 font-bold text-slate-800" />
+                                    </div>
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Warning Crack Growth (mm)</label>
+                                        <input type="number" step="0.1" value={localLimits[mfg].warningCrackGrowthMm} onChange={(e) => handleChange(mfg, 'warningCrackGrowthMm', e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2.5 font-bold text-slate-800" />
+                                    </div>
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Critical Crack Growth (mm)</label>
+                                        <input type="number" step="0.1" value={localLimits[mfg].criticalCrackGrowthMm} onChange={(e) => handleChange(mfg, 'criticalCrackGrowthMm', e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2.5 font-bold text-slate-800" />
+                                    </div>
+                                    <div>
+                                        <label className="block font-medium text-slate-700 mb-1">Max Critical Crack Length (mm)</label>
+                                        <input type="number" step="0.1" value={localLimits[mfg].criticalCrackLengthMm} onChange={(e) => handleChange(mfg, 'criticalCrackLengthMm', e.target.value)} required className="w-full border border-slate-300 rounded-lg p-2.5 font-bold text-slate-800" />
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+
+                        <div className="md:col-span-2">
+                            <button type="submit" className="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 rounded-xl shadow-sm transition-colors text-sm">
+                                Save Manufacturer Thresholds
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [currentTab, setCurrentTab] = useState('dashboard');
+            const [fleet, setFleet] = useState(INITIAL_FLEET);
+            const [tires, setTires] = useState(INITIAL_TIRES);
+            const [pressureLogs, setPressureLogs] = useState(INITIAL_PRESSURE_LOGS);
+            const [crackLogs, setCrackLogs] = useState(INITIAL_CRACK_LOGS);
+            const [limits, setLimits] = useState(INITIAL_LIMITS);
+            const [selectedAcReg, setSelectedAcReg] = useState('ALL');
+            const [selectedTire, setSelectedTire] = useState(null);
+            const [isNewAcModalOpen, setIsNewAcModalOpen] = useState(false);
+
+            const handleAddAircraft = (newAc) => {
+                setFleet([...fleet, newAc]);
+                const positions = TIRE_CONFIGS[newAc.model] || TIRE_CONFIGS['A320'];
+                const newTiresForAc = positions.map((pos, idx) => ({
+                    id: `T-${Date.now()}-${idx}`,
+                    reg: newAc.reg,
+                    position: pos,
+                    mfg: 'Michelin',
+                    model: 'Radial Air',
+                    sn: `MCH-${Math.floor(1000 + Math.random() * 9000)}`,
+                    status: 'Normal',
+                    hours: 50,
+                    cycles: 30
+                }));
+                setTires([...tires, ...newTiresForAc]);
+            };
+
+            const handleAddPressureLog = (newLog, status) => {
+                setPressureLogs([newLog, ...pressureLogs]);
+                setTires(tires.map(t => {
+                    if (t.reg === newLog.reg && t.position === newLog.position) {
+                        return { ...t, status };
+                    }
+                    return t;
+                }));
+            };
+
+            const handleAddCrackLog = (newCrack, status) => {
+                setCrackLogs([newCrack, ...crackLogs]);
+                setTires(tires.map(t => {
+                    if (t.reg === newCrack.reg && t.position === newCrack.position) {
+                        return { ...t, status };
+                    }
+                    return t;
+                }));
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-800">
+                    {/* Top Header */}
+                    <header className="bg-slate-900 text-white shadow-md sticky top-0 z-40">
+                        <div className="max-w-7xl mx-auto px-4 py-3.5 flex flex-col sm:flex-row justify-between items-center gap-4">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-teal-600 rounded-xl text-white shadow-inner">
+                                    <Icon name="plane" className="w-6 h-6 transform -rotate-45" />
+                                </div>
+                                <div>
+                                    <h1 className="text-base font-bold tracking-tight">ATHMS <span className="text-teal-400 font-normal">| Aircraft Tire Health Monitoring</span></h1>
+                                    <p className="text-[11px] text-slate-400">Pressure Drop &amp; Crack Growth AMM Compliance System</p>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                                <button 
+                                    onClick={() => setIsNewAcModalOpen(true)}
+                                    className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow transition-colors flex items-center gap-1.5"
+                                >
+                                    <Icon name="plus" className="w-4 h-4" />
+                                    <span>Register New Aircraft</span>
+                                </button>
+                                <div className="hidden md:flex items-center gap-2 pl-3 border-l border-slate-700 text-xs text-slate-300">
+                                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                    <span>System Active</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Navigation Tabs */}
+                        <div className="bg-slate-800/90 border-t border-slate-700 px-4">
+                            <div className="max-w-7xl mx-auto flex overflow-x-auto hide-scrollbar gap-1 py-2">
+                                {[
+                                    { id: 'dashboard', label: 'Fleet Dashboard', icon: 'dashboard' },
+                                    { id: 'pressure', label: 'Pressure & Nitrogen Logs', icon: 'gauge' },
+                                    { id: 'cracks', label: 'Crack Progression', icon: 'crack' },
+                                    { id: 'trends', label: 'Trend Analytics', icon: 'trends' },
+                                    { id: 'settings', label: 'AMM Limits', icon: 'settings' }
+                                ].map(tab => (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => setCurrentTab(tab.id)}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${currentTab === tab.id ? 'bg-teal-600 text-white shadow' : 'text-slate-300 hover:bg-slate-700 hover:text-white'}`}
+                                    >
+                                        <Icon name={tab.icon} className="w-4 h-4" />
+                                        <span>{tab.label}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Main Content Area */}
+                    <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
+                        {currentTab === 'dashboard' && (
+                            <DashboardView 
+                                fleet={fleet} 
+                                tires={tires} 
+                                selectedAcReg={selectedAcReg} 
+                                setSelectedAcReg={setSelectedAcReg} 
+                                onSelectTire={(tire) => setSelectedTire(tire)} 
+                                onNavigate={(tab) => setCurrentTab(tab)} 
+                            />
+                        )}
+                        {currentTab === 'pressure' && (
+                            <PressureMonitoringView 
+                                fleet={fleet} 
+                                tires={tires} 
+                                pressureLogs={pressureLogs} 
+                                onAddLog={handleAddPressureLog} 
+                                limits={limits} 
+                            />
+                        )}
+                        {currentTab === 'cracks' && (
+                            <CrackMonitoringView 
+                                fleet={fleet} 
+                                tires={tires}
+                                crackLogs={crackLogs} 
+                                onAddCrack={handleAddCrackLog} 
+                                limits={limits} 
+                            />
+                        )}
+                        {currentTab === 'trends' && (
+                            <TrendAnalysisView 
+                                pressureLogs={pressureLogs} 
+                                crackLogs={crackLogs} 
+                                tires={tires} 
+                            />
+                        )}
+                        {currentTab === 'settings' && (
+                            <SettingsView 
+                                limits={limits} 
+                                onUpdateLimits={(newLim) => setLimits(newLim)} 
+                            />
+                        )}
+                    </main>
+
+                    {/* Footer */}
+                    <footer className="bg-white border-t border-slate-200 text-slate-500 text-xs py-4 text-center mt-auto">
+                        <p>Aircraft Tire Health Monitoring System (ATHMS) &bull; Compliant with Airbus &amp; Boeing AMM Guidelines</p>
+                    </footer>
+
+                    {/* New Aircraft Modal */}
+                    <NewAircraftModal 
+                        isOpen={isNewAcModalOpen} 
+                        onClose={() => setIsNewAcModalOpen(false)} 
+                        onAddAircraft={handleAddAircraft} 
+                    />
+
+                    {/* Tire Details Modal */}
+                    {selectedTire && (
+                        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+                            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
+                                <div className="bg-slate-900 text-white p-5 flex justify-between items-center">
+                                    <div>
+                                        <h3 className="font-bold text-base">Tire Details &bull; {selectedTire.position}</h3>
+                                        <p className="text-xs text-slate-400">Aircraft Reg: {selectedTire.reg} &bull; S/N: {selectedTire.sn}</p>
+                                    </div>
+                                    <button onClick={() => setSelectedTire(null)} className="text-slate-400 hover:text-white text-lg font-bold px-2">&times;</button>
+                                </div>
+                                <div className="p-6 space-y-4 text-xs">
+                                    <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                                        <div>
+                                            <span className="text-slate-500 block">Manufacturer</span>
+                                            <span className="font-bold text-slate-800 text-sm">{selectedTire.mfg} ({selectedTire.model})</span>
+                                        </div>
+                                        <div>
+                                            <span className="text-slate-500 block">Condition Status</span>
+                                            <div className="mt-1"><StatusBadge status={selectedTire.status} /></div>
+                                        </div>
+                                        <div>
+                                            <span className="text-slate-500 block">Accumulated Hours</span>
+                                            <span className="font-mono font-bold text-slate-800">{selectedTire.hours} Hours</span>
+                                        </div>
+                                        <div>
+                                            <span className="text-slate-500 block">Flight Cycles</span>
+                                            <span className="font-mono font-bold text-slate-800">{selectedTire.cycles} Landings</span>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <h4 className="font-bold text-slate-800 mb-2">Recent Pressure Logs for {selectedTire.position}</h4>
+                                        <div className="max-h-40 overflow-y-auto border border-slate-200 rounded-lg">
+                                            <table className="w-full text-left text-[11px]">
+                                                <thead className="bg-slate-100 text-slate-600">
+                                                    <tr>
+                                                        <th className="p-2">Flight</th>
+                                                        <th className="p-2">Date</th>
+                                                        <th className="p-2">Before / After</th>
+                                                        <th className="p-2">Drop</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-100">
+                                                    {pressureLogs.filter(l => l.reg === selectedTire.reg && l.position === selectedTire.position).length > 0 ? (
+                                                        pressureLogs.filter(l => l.reg === selectedTire.reg && l.position === selectedTire.position).map(l => (
+                                                            <tr key={l.id}>
+                                                                <td className="p-2 font-semibold">{l.flight}</td>
+                                                                <td className="p-2">{l.date}</td>
+                                                                <td className="p-2 font-mono">{l.beforePsi}/{l.afterPsi} PSI</td>
+                                                                <td className="p-2 font-bold text-amber-600">-{l.drop} PSI</td>
+                                                            </tr>
+                                                        ))
+                                                    ) : (
+                                                        <tr>
+                                                            <td colSpan="4" className="p-3 text-center text-slate-400">No specific logs for this position</td>
+                                                        </tr>
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+
+                                    <div className="pt-2 flex justify-end">
+                                        <button 
+                                            onClick={() => setSelectedTire(null)}
+                                            className="px-4 py-2 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-900 transition-colors"
+                                        >
+                                            Close
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
